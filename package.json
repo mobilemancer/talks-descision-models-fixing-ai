@@ -1,0 +1,23 @@
+{
+  "name": "decision-models-demos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live demos for the talk 'Decision models – fixing everything wrong with AI!' (Jev + Microsoft Foundry)",
+  "type": "module",
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "check": "tsx --env-file=.env src/check.ts",
+    "demo1": "tsx --env-file=.env src/demo1-llm-ten-times.ts",
+    "demo2": "tsx --env-file=.env src/demo2-side-by-side.ts",
+    "demo3": "tsx --env-file=.env src/demo3-screenshots.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "sharp": "^0.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
