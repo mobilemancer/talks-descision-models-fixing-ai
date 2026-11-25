@@ -1,5 +1,11 @@
 // fetch with timing, timeout and a small retry on 429 / 5xx.
 
+import tls from "node:tls";
+
+// Node 26 (OpenSSL 3.5) offers a large post-quantum key share in the TLS ClientHello by default.
+// Some networks reset that handshake (ECONNRESET to *.services.ai.azure.com), so stick to classic curves.
+tls.DEFAULT_ECDH_CURVE = "X25519:prime256v1";
+
 export interface Timed<T> {
   data: T;
   ms: number;

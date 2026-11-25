@@ -10,7 +10,7 @@ export const TEAM_NAMES = Object.keys(TEAMS) as Team[];
 
 /** Deliberately ambiguous – touches billing, technical and account at once. */
 export const AMBIGUOUS_TICKET =
-  "The app crashed while I was paying, and now I've been charged twice – and I can't log in to check my order.";
+  "I can't log in since the update – it says my card on file is invalid, and the page keeps freezing when I try to fix it.";
 
 export interface Ticket {
   id: string;
@@ -26,7 +26,7 @@ export const TICKETS: Ticket[] = [
   { id: "T5", expected: "technical", text: "Checkout shows '500 Internal Server Error' every time I click Pay." },
   { id: "T6", expected: "account", text: "Please delete my account and all my personal data." },
   { id: "T7", expected: "technical", text: "Search returns nothing since this morning, even for books I know you have." },
-  { id: "T8", expected: "billing", text: AMBIGUOUS_TICKET },
+  { id: "T8", expected: "technical", text: AMBIGUOUS_TICKET },
 ];
 
 export const SEVERITY_LEVELS = [

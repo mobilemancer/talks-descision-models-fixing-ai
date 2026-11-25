@@ -9,7 +9,7 @@ import { mkdir } from "node:fs/promises";
 import sharp from "sharp";
 import { availableProviders, box, choice, image, noul, score, type BoxA, type ChoiceA, type NoulA, type ScoreA, choiceProbability } from "./lib/decision.js";
 import { SEVERITY_LEVELS } from "./data/tickets.js";
-import { bar, c, maybeRecord, ms, openFile, pause, section, title } from "./lib/ui.js";
+import { bar, c, maybeRecord, ms, openFile, pause, section, table, title } from "./lib/ui.js";
 
 maybeRecord("demo3");
 const SHOTS = ["checkout-error", "dashboard-ok", "settings-broken", "login-crash"];
@@ -28,35 +28,71 @@ const questions = {
   where: box("the error message in `screenshot`"),
 };
 
+const REPORT = "Screenshot attached to a customer bug report.";
+
 title("Demo 3 · Decisions over pictures", `${providers.map((p) => p.name).join(" and ")} · ${SHOTS.length} bug-report screenshots`);
 await mkdir("out", { recursive: true });
 
-for (const name of SHOTS) {
-  const path = `assets/screenshots/${name}.png`;
-  section(name);
-  const img = await image(path);
-  const state = { report: "Screenshot attached to a customer bug report.", screenshot: img };
+// ---------- What we ask ----------
+section("The request – one call per model, per screenshot");
+console.log(`  ${c.bold("state")}      report: "${REPORT}"`);
+console.log(`             screenshot: <the image>\n`);
+console.log(`  ${c.bold("questions")}`);
+console.log(`  ${c.gold("has_error")}  ${c.dim("yes/no")}   ${questions.has_error.instructions}`);
+console.log(`  ${" ".repeat(9)}  ${c.dim("→ a probability 0–1")}`);
+console.log(`  ${c.gold("area")}       ${c.dim("choice")}   ${questions.area.instructions}`);
+for (const [k, v] of Object.entries(questions.area.criteria)) console.log(`  ${" ".repeat(20)}${c.bold(k.padEnd(10))} ${c.dim(v)}`);
+console.log(`  ${c.gold("severity")}   ${c.dim("score")}    ${questions.severity.instructions}`);
+SEVERITY_LEVELS.forEach((l, i) => console.log(`  ${" ".repeat(20)}${c.bold(String(i).padEnd(10))} ${c.dim(l)}`));
+console.log(`  ${c.gold("where")}      ${c.dim("box")}      Find ${questions.where.instructions}`);
+console.log(`  ${" ".repeat(9)}  ${c.dim(`→ coordinates, drawn onto a copy of the image (${providers.filter((p) => p.supportsBox).map((p) => p.name).join(", ") || "no provider"} only)`)}`);
 
+await pause("first screenshot");
+
+// ---------- One screenshot at a time ----------
+for (const [n, name] of SHOTS.entries()) {
+  const path = `assets/screenshots/${name}.png`;
+  section(`${n + 1}/${SHOTS.length}  ${name}  ${c.dim(path)}`);
+  if (open) openFile(path);
+  const img = await image(path);
+  const state = { report: REPORT, screenshot: img };
+
+  const cols: string[][] = [];
+  const boxes: string[] = [];
   for (const p of providers) {
     const r = await p.decide(state, questions);
     const hasError = r.answers.has_error as NoulA;
     const area = r.answers.area as ChoiceA;
     const sev = r.answers.severity as ScoreA;
-    console.log(
-      `  ${c.bold(p.name.padEnd(12))} ${ms(r.ms).padStart(7)}   error? ${bar(hasError.noul, 8)}   area ${c.bold(area.choice.padEnd(9))} ${bar(choiceProbability(area), 6)}   severity ${c.bold(sev.score.toFixed(1))}${c.dim(" / 3")}`,
-    );
-
     const where = r.answers.where as BoxA | undefined;
-    if (where && hasError.noul >= 0.5) {
+
+    let whereCell: string;
+    if (!p.supportsBox) whereCell = c.dim("not supported");
+    else if (!where) whereCell = c.dim("–");
+    else if (hasError.noul < 0.5) whereCell = c.dim("ignored – no error");
+    else {
       const out = await drawBox(path, where, `out/${name}-boxed.png`);
-      console.log(`  ${" ".repeat(12)} ${c.gold("box")} top ${where.box.top.toFixed(2)} left ${where.box.left.toFixed(2)} bottom ${where.box.bottom.toFixed(2)} right ${where.box.right.toFixed(2)}  ${bar(where.confidence, 6)}  → ${out}`);
-      if (open) openFile(out);
-    } else if (where) {
-      console.log(c.dim(`  ${" ".repeat(12)} no error found – box ignored (a box always comes back, so we gate it on the yes/no answer)`));
+      whereCell = `${bar(where.confidence, 6)}  → ${out}`;
+      boxes.push(out);
     }
+
+    cols.push([
+      ms(r.ms),
+      bar(hasError.noul, 8),
+      `${c.bold(area.choice)} ${bar(choiceProbability(area), 6)}`,
+      `${c.bold(sev.score.toFixed(1))}${c.dim(" / 3")}  ${c.dim(SEVERITY_LEVELS[Math.round(sev.score)] ?? "")}`,
+      whereCell,
+    ]);
   }
-  await pause("next screenshot");
+
+  const labels = ["latency", "has_error", "area", "severity", "where"];
+  table(["", ...providers.map((p) => p.name)], labels.map((l, i) => [c.gold(l), ...cols.map((col) => col[i])]));
+  if (boxes.length) console.log(c.dim("\n  A box always comes back, so we only draw it when has_error says yes."));
+  if (open) boxes.forEach(openFile);
+
+  if (n < SHOTS.length - 1) await pause("next screenshot");
 }
+console.log();
 
 /** Draw the returned box (fractions of width/height) onto a copy of the image. */
 async function drawBox(src: string, a: BoxA, dest: string) {

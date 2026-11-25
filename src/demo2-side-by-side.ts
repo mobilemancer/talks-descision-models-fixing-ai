@@ -1,5 +1,5 @@
 // DEMO 2 – "LLM vs decision model"
-// 1. Route eight tickets with the Foundry LLM, Jev and Microsoft-Decision-1.1 (each decision model 3×).
+// 1. Route eight tickets with the Foundry LLM, Jev and Microsoft-Decision-1.1 (--repeats=N asks each model N×).
 // 2. Ask three questions about one ticket in a single call.
 // 3. Apply a confidence policy: act / act and log / hand to the LLM.
 
@@ -10,7 +10,8 @@ import { SEVERITY_LEVELS, TEAMS, TEAM_NAMES, TICKETS } from "./data/tickets.js";
 import { bar, c, maybeRecord, median, ms, pause, section, table, title } from "./lib/ui.js";
 
 maybeRecord("demo2");
-const REPEATS = 3;
+// 1 by default to keep the demo short; --repeats=3 adds the "same N×" stability columns.
+const REPEATS = Math.max(1, Number(process.argv.find((a) => a.startsWith("--repeats="))?.split("=")[1] ?? 1));
 const providers = availableProviders();
 const model = llm();
 const routeQ = { team: choice("Which team should handle this ticket?", TEAMS) };
@@ -20,44 +21,52 @@ const system = `You route support tickets. Reply with exactly one word: ${TEAM_N
 title("Demo 2 · LLM vs decision model", `${model.name} vs ${providers.map((p) => p.name).join(" and ")}`);
 
 // ---------- 1. Side by side ----------
-section(`Routing ${TICKETS.length} tickets – every model asked ${REPEATS}× per ticket`);
+section(`Routing ${TICKETS.length} tickets` + (REPEATS > 1 ? ` – every model asked ${REPEATS}× per ticket` : ""));
+
+for (const t of TICKETS) console.log(`  ${c.bold(t.id)}  ${t.text}`);
+console.log(c.dim("\n  routing…\n"));
 
 type Cell = { team?: string; p?: number; ms: number[]; stable: boolean };
-const results: Record<string, Cell>[] = [];
 
+// The slow LLM calls run for all tickets in parallel; meanwhile the decision models go one
+// call at a time, so their latency isn't inflated by a burst of concurrent requests.
+const llmCells = Promise.all(TICKETS.map(async (t): Promise<Cell> => {
+  const runs = await Promise.all(Array.from({ length: REPEATS }, () => model.ask(system, t.text)));
+  const teams = runs.map((r) => parseLabel(r.text, TEAM_NAMES).label);
+  return { team: teams[0], ms: runs.map((r) => r.ms), stable: teams.every((x) => x === teams[0]) };
+}));
+
+const results: Record<string, Cell>[] = [];
 for (const t of TICKETS) {
   const row: Record<string, Cell> = {};
-  const llmRuns = await Promise.all(Array.from({ length: REPEATS }, () => model.ask(system, t.text)));
-  const llmTeams = llmRuns.map((r) => parseLabel(r.text, TEAM_NAMES).label);
-  row.llm = { team: llmTeams[0], ms: llmRuns.map((r) => r.ms), stable: llmTeams.every((x) => x === llmTeams[0]) };
-
-  await Promise.all(
-    providers.map(async (p) => {
-      const runs = await Promise.all(Array.from({ length: REPEATS }, () => p.decide(t.text, routeQ)));
-      const answers = runs.map((r) => r.answers.team as ChoiceA);
-      row[p.name] = {
-        team: answers[0].choice,
-        p: choiceProbability(answers[0]),
-        ms: runs.map((r) => r.ms),
-        stable: answers.every((a) => a.choice === answers[0].choice),
-      };
-    }),
-  );
+  for (const p of providers) {
+    const runs = [];
+    for (let i = 0; i < REPEATS; i++) runs.push(await p.decide(t.text, routeQ));
+    const answers = runs.map((r) => r.answers.team as ChoiceA);
+    row[p.name] = {
+      team: answers[0].choice,
+      p: choiceProbability(answers[0]),
+      ms: runs.map((r) => r.ms),
+      stable: answers.every((a) => a.choice === answers[0].choice),
+    };
+  }
   results.push(row);
-  process.stdout.write(c.dim(`  ${t.id} done\n`));
 }
+(await llmCells).forEach((cell, i) => (results[i].llm = cell));
 
 const mark = (team: string | undefined, expected: string) => (team === expected ? c.green(team) : team ? c.yellow(team) : c.red("?"));
+const same = (stable: boolean) => (REPEATS > 1 ? [stable ? c.green("yes") : c.red("no")] : []);
+const sameHead = REPEATS > 1 ? [`same ${REPEATS}×`] : [];
 table(
-  ["ticket", "expected", "LLM", "same 3×", ...providers.flatMap((p) => [p.name, "p", "same 3×"])],
+  ["ticket", "expected", "LLM", ...sameHead, ...providers.flatMap((p) => [p.name, "p", ...sameHead])],
   TICKETS.map((t, i) => {
     const r = results[i];
     return [
       t.id,
       c.dim(t.expected),
       mark(r.llm.team, t.expected),
-      r.llm.stable ? c.green("yes") : c.red("no"),
-      ...providers.flatMap((p) => [mark(r[p.name].team, t.expected), bar(r[p.name].p, 8), r[p.name].stable ? c.green("yes") : c.red("no")]),
+      ...same(r.llm.stable),
+      ...providers.flatMap((p) => [mark(r[p.name].team, t.expected), bar(r[p.name].p, 8), ...same(r[p.name].stable)]),
     ];
   }),
 );
